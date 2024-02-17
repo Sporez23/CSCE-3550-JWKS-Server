@@ -138,7 +138,7 @@ private:
     }
 };
 
-// Mock testing client
+// testing client
 class TestClient {
 public:
     // Method to simulate POST request to /auth
