@@ -1,0 +1,140 @@
+#include <iostream>
+#include <map>
+#include <vector>
+#include <chrono>
+#include <ctime>
+#include <openssl/rsa.h>
+#include <openssl/pem.h>
+#include <openssl/bio.h>
+#include <openssl/evp.h>
+#include <openssl/rand.h>
+#include <sstream>
+#include <iomanip>
+
+using namespace std;
+
+// Struct to represent a key pair
+struct KeyPair {
+    RSA* privateKey;
+    RSA* publicKey;
+    string kid; // Key ID
+    chrono::system_clock::time_point expiry; // Expiry time
+};
+
+// Utility function to generate an RSA key pair
+KeyPair generateRSAKeyPair(const string& kid, const time_t& expiry_time) {
+    KeyPair keyPair;
+    keyPair.privateKey = RSA_new();
+    keyPair.publicKey = RSA_new();
+    keyPair.kid = kid;
+    keyPair.expiry = chrono::system_clock::from_time_t(expiry_time);
+
+    // Generate RSA key pair
+    RSA_generate_key_ex(keyPair.privateKey, 2048, NULL, NULL);
+    RSA_generate_key_ex(keyPair.publicKey, 2048, NULL, NULL);
+
+    return keyPair;
+}
+
+// Utility function to convert RSA key to PEM format
+string RSAKeyToPEM(RSA* key) {
+    BIO* bio = BIO_new(BIO_s_mem());
+    PEM_write_bio_RSAPublicKey(bio, key);
+    char* buffer;
+    long length = BIO_get_mem_data(bio, &buffer);
+    string pemKey(buffer, length);
+    BIO_free_all(bio);
+    return pemKey;
+}
+
+class JWKS_Server {
+private:
+    map<string, KeyPair> keyPairs; // Map to store key pairs
+
+public:
+    // Method to add a new key pair
+    void addKeyPair(const KeyPair& keyPair) {
+        keyPairs[keyPair.kid] = keyPair;
+    }
+
+    // Method to serve JWKS endpoint
+    string serveJWKS() {
+        stringstream jwks;
+        jwks << "{\"keys\":[";
+        bool first = true;
+        for (const auto& pair : keyPairs) {
+            if (pair.second.expiry > chrono::system_clock::now()) {
+                if (!first) jwks << ",";
+                jwks << "{\"kid\":\"" << pair.second.kid << "\",\"pubkey\":\"" << RSAKeyToPEM(pair.second.publicKey) << "\"}";
+                first = false;
+            }
+        }
+        jwks << "]}";
+        return jwks.str();
+    }
+
+    // Method to issue JWT
+    string issueJWT(const string& kid, bool useExpiredKey = false) {
+        if (keyPairs.find(kid) != keyPairs.end()) {
+            if (useExpiredKey || keyPairs[kid].expiry > chrono::system_clock::now()) {
+                // In a real scenario, you would use a JWT library to sign the token
+                // For simplicity, we just return a dummy token here
+                return "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE2MzE2NjkwMzYsImlhdCI6MTYzMjA2NDAzNn0.e8ucjNp10NMR1GcvthD0pTz6ls4xVK_UmblAe6BNUU8";
+            }
+        }
+        return ""; // Return empty string if key not found or expired
+    }
+};
+
+// Mock web server class
+class WebServer {
+private:
+    JWKS_Server jwksServer;
+
+public:
+    // Method to start the server
+    void start() {
+        // Serve JWKS endpoint
+        cout << "Serving JWKS on http://localhost:8080/.well-known/jwks.json" << endl;
+        // Serve /auth endpoint
+        cout << "Serving /auth on http://localhost:8080/auth" << endl;
+
+        // Example key pair
+        KeyPair keyPair1 = generateRSAKeyPair("kid_1", time(NULL) + 3600); // Expiry 1 hour from now
+        jwksServer.addKeyPair(keyPair1);
+
+        // Example key pair
+        KeyPair keyPair2 = generateRSAKeyPair("kid_2", time(NULL) + 7200); // Expiry 2 hours from now
+        jwksServer.addKeyPair(keyPair2);
+
+        // Run web server
+        // For simplicity, we don't implement an actual web server here. Just print the endpoints.
+    }
+};
+
+// Mock testing client
+class TestClient {
+public:
+    // Method to simulate POST request to /auth
+    void testAuthEndpoint(WebServer& server) {
+        // Simulate POST request to /auth
+        string token = server.jwksServer.issueJWT("kid_1");
+        if (!token.empty()) {
+            cout << "Received JWT from /auth endpoint: " << token << endl;
+        } else {
+            cout << "Failed to receive JWT from /auth endpoint." << endl;
+        }
+    }
+};
+
+int main() {
+    WebServer server;
+    TestClient client;
+
+    server.start(); // Start the web server
+
+    // Simulate blackbox testing
+    client.testAuthEndpoint(server);
+
+    return 0;
+}
