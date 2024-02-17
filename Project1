@@ -10,6 +10,7 @@
 #include <openssl/rand.h>
 #include <sstream>
 #include <iomanip>
+#include <pistache/endpoint.h>
 
 using namespace std;
 
@@ -86,7 +87,7 @@ public:
     }
 };
 
-// Mock web server class
+// web server class
 class WebServer {
 private:
     JWKS_Server jwksServer;
@@ -94,21 +95,46 @@ private:
 public:
     // Method to start the server
     void start() {
+        Pistache::Address addr(Pistache::Ipv4::any(), Pistache::Port(8080));
+
+        auto opts = Pistache::Http::Endpoint::options().threads(1);
+        auto httpEndpoint = std::make_shared<Pistache::Http::Endpoint>(addr);
+
+        httpEndpoint->init(opts);
+        httpEndpoint->setHandler(createRouter());
+        httpEndpoint->serve();
+    }
+
+private:
+    // Method to create request handler
+    std::shared_ptr<Pistache::Http::Handler> createRouter() {
+        auto router = std::make_shared<Pistache::Http::Router>();
+
         // Serve JWKS endpoint
-        cout << "Serving JWKS on http://localhost:8080/.well-known/jwks.json" << endl;
+        Pistache::Rest::Routes::Get(router, "/.well-known/jwks.json", Pistache::Rest::Routes::bind(&WebServer::serveJWKS, this));
+        
         // Serve /auth endpoint
-        cout << "Serving /auth on http://localhost:8080/auth" << endl;
+        Pistache::Rest::Routes::Post(router, "/auth", Pistache::Rest::Routes::bind(&WebServer::serveAuth, this));
 
-        // Example key pair
-        KeyPair keyPair1 = generateRSAKeyPair("kid_1", time(NULL) + 3600); // Expiry 1 hour from now
-        jwksServer.addKeyPair(keyPair1);
+        return router;
+    }
 
-        // Example key pair
-        KeyPair keyPair2 = generateRSAKeyPair("kid_2", time(NULL) + 7200); // Expiry 2 hours from now
-        jwksServer.addKeyPair(keyPair2);
+    // JWKS endpoint handler
+    void serveJWKS(const Pistache::Rest::Request& request, Pistache::Http::ResponseWriter response) {
+        auto jwks = jwksServer.serveJWKS();
+        response.send(Pistache::Http::Code::Ok, jwks);
+    }
 
-        // Run web server
-        // For simplicity, we don't implement an actual web server here. Just print the endpoints.
+    // /auth endpoint handler
+    void serveAuth(const Pistache::Rest::Request& request, Pistache::Http::ResponseWriter response) {
+        // Check if "expired" query parameter is present
+        bool useExpired = request.query().has("expired");
+        auto token = jwksServer.issueJWT("kid_1", useExpired);
+        if (!token.empty()) {
+            response.send(Pistache::Http::Code::Ok, token);
+        } else {
+            response.send(Pistache::Http::Code::Internal_Server_Error, "Failed to issue JWT.");
+        }
     }
 };
 
