@@ -12,12 +12,15 @@ hostName = "localhost"
 serverPort = 8080
 
 # Create/open SQLite DB file at start
-db_connection = sqlite3.connect('private_keys.db')
+db_connection = sqlite3.connect('totally_not_my_privateKeys.db')
 db_cursor = db_connection.cursor()
 
 # Create table to store private keys if it doesn't exist
-db_cursor.execute('''CREATE TABLE IF NOT EXISTS private_keys
-                     (kid TEXT PRIMARY KEY, private_key TEXT)''')
+db_cursor.execute('''CREATE TABLE IF NOT EXISTS keys(
+                     kid INTEGER PRIMARY KEY AUTOINCREMENT,
+                     key BLOB NOT NULL,
+                     exp INTEGER NOT NULL
+                     )''')
 
 private_key = rsa.generate_private_key(
     public_exponent=65537,
@@ -27,7 +30,7 @@ expired_key = rsa.generate_private_key(
     public_exponent=65537,
     key_size=2048,
 )
-
+# Serialize private keys to PEM format
 pem = private_key.private_bytes(
     encoding=serialization.Encoding.PEM,
     format=serialization.PrivateFormat.TraditionalOpenSSL,
@@ -39,6 +42,10 @@ expired_pem = expired_key.private_bytes(
     encryption_algorithm=serialization.NoEncryption()
 )
 
+# Save private keys to the database
+db_cursor.execute("INSERT INTO keys (key, exp) VALUES (?, ?)", (pem, int(datetime.datetime.utcnow().timestamp())))
+db_cursor.execute("INSERT INTO keys (key, exp) VALUES (?, ?)", (expired_pem, int((datetime.datetime.utcnow() - datetime.timedelta(hours=1)).timestamp())))
+db_connection.commit()
 numbers = private_key.private_numbers()
 
 def int_to_base64(value):
@@ -129,4 +136,5 @@ if __name__ == "__main__":
 
     webServer.server_close()
     db_connection.close()  # Close database connection when server stops
+
 
